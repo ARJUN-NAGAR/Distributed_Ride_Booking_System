@@ -5,7 +5,7 @@ services:
     image: redis:7.2-alpine
     container_name: uber-redis
     ports:
-      - "6379:6379"
+      - "16379:6379"
     command: redis-server --save "" --appendonly no
     networks:
       - uber-network

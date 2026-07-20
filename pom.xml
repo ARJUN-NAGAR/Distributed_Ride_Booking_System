@@ -26,9 +26,11 @@
     </properties>
 
     <modules>
+        <module>common</module>
         <module>location-service</module>
         <module>ride-service</module>
         <module>matching-service</module>
+        <module>api-gateway</module>
     </modules>
 
     <dependencyManagement>
