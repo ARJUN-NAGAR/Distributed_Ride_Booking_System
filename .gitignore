@@ -1,0 +1,56 @@
+# Maven build output
+target/
+**/target/
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# IntelliJ IDEA
+.idea/
+*.iml
+out/
+**/out/
+
+# Eclipse
+.metadata/
+.classpath
+.project
+.settings/
+bin/
+**/bin/
+
+# NetBeans
+nbproject/private/
+build/
+**/build/
+nbbuild/
+dist/
+nbdist/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+
+# Keystores & Credentials
+*.jks
+*.p12
+*.pem
+.env
+.env.*
+
+# Local Temporary Binaries & Build Logs
+temp-maven/
+*.log
+*-log.txt
+*-log-new.txt
+
+# Node & Frontend Dependencies / Dist
+node_modules/
+**/node_modules/
+
+**/dist/
+.env.local
