@@ -1,7 +1,7 @@
 package com.uber.locationservice.controller;
 
 import com.uber.locationservice.dto.DriverTelemetryRequest;
-import com.uber.locationservice.dto.NearbyDriverResponse;
+import com.uber.common.dto.NearbyDriverResponse;
 import com.uber.locationservice.service.LocationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;

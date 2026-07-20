@@ -1,6 +1,6 @@
 package com.uber.locationservice.service;
 
-import com.uber.locationservice.dto.NearbyDriverResponse;
+import com.uber.common.dto.NearbyDriverResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.geo.Circle;
@@ -30,6 +30,9 @@ public class LocationService {
         Point point = new Point(longitude, latitude);
         redisTemplate.opsForGeo().add(GEO_KEY, point, driverId);
         
+        // Mark driver as active with 15s TTL
+        redisTemplate.opsForValue().set("driver:active:" + driverId, "true", java.time.Duration.ofSeconds(15));
+        
         // Simulating or storing a persistent rating if none exists
         Object existingRating = redisTemplate.opsForHash().get(RATINGS_KEY, driverId);
         if (existingRating == null) {
@@ -49,29 +52,38 @@ public class LocationService {
                 .includeCoordinates()
                 .includeDistance()
                 .sortAscending();
-
+ 
         GeoResults<RedisGeoCommands.GeoLocation<String>> results = redisTemplate.opsForGeo().radius(GEO_KEY, searchArea, args);
         List<NearbyDriverResponse> candidates = new ArrayList<>();
-
+ 
         if (results != null) {
             results.forEach(result -> {
                 RedisGeoCommands.GeoLocation<String> location = result.getContent();
                 String driverId = location.getName();
                 
-                // Retrieve rating from Redis Hash
-                Object ratingVal = redisTemplate.opsForHash().get(RATINGS_KEY, driverId);
-                double rating = ratingVal != null ? Double.parseDouble(ratingVal.toString()) : 4.5;
-
-                candidates.add(NearbyDriverResponse.builder()
-                        .driverId(driverId)
-                        .latitude(location.getPoint().getY())  // Latitude
-                        .longitude(location.getPoint().getX()) // Longitude
-                        .distanceKm(result.getDistance().getValue())
-                        .rating(rating)
-                        .build());
+                // Verify driver is active via TTL key
+                Boolean isActive = redisTemplate.hasKey("driver:active:" + driverId);
+                if (Boolean.TRUE.equals(isActive)) {
+                    // Retrieve rating from Redis Hash
+                    Object ratingVal = redisTemplate.opsForHash().get(RATINGS_KEY, driverId);
+                    double rating = ratingVal != null ? Double.parseDouble(ratingVal.toString()) : 4.5;
+ 
+                    candidates.add(NearbyDriverResponse.builder()
+                            .driverId(driverId)
+                            .latitude(location.getPoint().getY())  // Latitude
+                            .longitude(location.getPoint().getX()) // Longitude
+                            .distanceKm(result.getDistance().getValue())
+                            .rating(rating)
+                            .build());
+                } else {
+                    // Lazy eviction of expired driver
+                    redisTemplate.opsForGeo().remove(GEO_KEY, driverId);
+                    redisTemplate.opsForHash().delete(RATINGS_KEY, driverId);
+                    log.info("Evicted inactive driver {} from geo index due to TTL expiry", driverId);
+                }
             });
         }
-        log.info("Found {} candidate drivers within {}km of ({}, {})", candidates.size(), radiusKm, latitude, longitude);
+        log.info("Found {} active candidate drivers within {}km of ({}, {})", candidates.size(), radiusKm, latitude, longitude);
         return candidates;
     }
 }
