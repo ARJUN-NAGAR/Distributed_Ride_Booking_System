@@ -1,0 +1,3 @@
+ALTER TABLE rides 
+ADD COLUMN pickup_address VARCHAR(500) NULL,
+ADD COLUMN drop_address VARCHAR(500) NULL;

@@ -1,7 +1,7 @@
 package com.uber.rideservice.consumer;
 
-import com.uber.rideservice.event.RideMatchedEvent;
-import com.uber.rideservice.event.RideMatchingFailedEvent;
+import com.uber.common.event.RideMatchedEvent;
+import com.uber.common.event.RideMatchingFailedEvent;
 import com.uber.rideservice.model.Ride;
 import com.uber.rideservice.model.RideStatus;
 import com.uber.rideservice.repository.RideRepository;
@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import com.uber.rideservice.service.SseEmitterService;
 
 import java.util.UUID;
 
@@ -20,6 +21,7 @@ import java.util.UUID;
 public class RideLifecycleConsumer {
 
     private final RideRepository rideRepository;
+    private final SseEmitterService sseEmitterService;
 
     @KafkaListener(topics = "ride.matched", groupId = "ride-lifecycle-group")
     @Transactional
@@ -35,7 +37,8 @@ public class RideLifecycleConsumer {
             ride.setDriverId(event.getDriverId());
             ride.setStatus(RideStatus.ACCEPTED);
             
-            rideRepository.save(ride);
+            Ride savedRide = rideRepository.save(ride);
+            sseEmitterService.publish(rideId, savedRide);
             log.info("Successfully updated Ride {} state to ACCEPTED with driver: {}", rideId, event.getDriverId());
         } catch (Exception e) {
             log.error("Failed to process RideMatchedEvent: {}", e.getMessage());
@@ -55,7 +58,8 @@ public class RideLifecycleConsumer {
 
             // Transition back to CANCELLED state due to match failure
             ride.setStatus(RideStatus.CANCELLED);
-            rideRepository.save(ride);
+            Ride savedRide = rideRepository.save(ride);
+            sseEmitterService.publish(rideId, savedRide);
             log.info("Saga Compensation Complete. Ride {} updated status to CANCELLED.", rideId);
         } catch (Exception e) {
             log.error("Failed to execute compensation Saga for ride {}: {}", event.getRideId(), e.getMessage());

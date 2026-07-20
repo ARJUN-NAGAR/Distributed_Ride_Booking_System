@@ -1,7 +1,7 @@
 package com.uber.rideservice.service;
 
 import com.uber.rideservice.dto.BookRideRequest;
-import com.uber.rideservice.event.RideRequestedEvent;
+import com.uber.common.event.RideRequestedEvent;
 import com.uber.rideservice.model.Ride;
 import com.uber.rideservice.model.RideStatus;
 import com.uber.rideservice.repository.RideRepository;
@@ -14,6 +14,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.uber.rideservice.model.OutboxEvent;
+import com.uber.rideservice.model.OutboxStatus;
+import com.uber.rideservice.repository.OutboxEventRepository;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -21,8 +26,10 @@ public class RideService {
 
     private final RideRepository rideRepository;
     private final HaversinePricingService pricingService;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
     private final SurgePricingService surgePricingService;
+    private final SseEmitterService sseEmitterService;
+    private final OutboxEventRepository outboxEventRepository;
+    private final ObjectMapper objectMapper;
 
     private static final String RIDE_REQUESTED_TOPIC = "ride.requested";
 
@@ -47,6 +54,8 @@ public class RideService {
                 .pickupLongitude(request.getPickupLongitude())
                 .dropLatitude(request.getDropLatitude())
                 .dropLongitude(request.getDropLongitude())
+                .pickupAddress(request.getPickupAddress())
+                .dropAddress(request.getDropAddress())
                 .fare(Math.round(fare * 100.0) / 100.0)
                 .status(RideStatus.REQUESTED)
                 .build();
@@ -62,11 +71,33 @@ public class RideService {
                 .pickupLongitude(savedRide.getPickupLongitude())
                 .dropLatitude(savedRide.getDropLatitude())
                 .dropLongitude(savedRide.getDropLongitude())
+                .pickupAddress(savedRide.getPickupAddress())
+                .dropAddress(savedRide.getDropAddress())
                 .fare(savedRide.getFare())
                 .build();
 
-        kafkaTemplate.send(RIDE_REQUESTED_TOPIC, savedRide.getId().toString(), event);
-        log.info("Emitted RideRequestedEvent to Kafka for ride: {}", savedRide.getId());
+        // Serialize event and save to outbox table within the SAME transaction
+        try {
+            String payload = objectMapper.writeValueAsString(event);
+            OutboxEvent outboxEvent = OutboxEvent.builder()
+                    .topic(RIDE_REQUESTED_TOPIC)
+                    .messageKey(savedRide.getId().toString())
+                    .payload(payload)
+                    .status(OutboxStatus.PENDING)
+                    .build();
+            outboxEventRepository.save(outboxEvent);
+            log.info("Saved RideRequestedEvent to Outbox table for ride: {}", savedRide.getId());
+        } catch (Exception ex) {
+            log.error("Failed to serialize OutboxEvent for ride {}", savedRide.getId(), ex);
+            throw new RuntimeException("Ride booking failed due to internal error. Please try again.");
+        }
+
+        // Transition to MATCHING — driver search is now in progress
+        savedRide.setStatus(RideStatus.MATCHING);
+        savedRide = rideRepository.save(savedRide);
+        log.info("Ride {} status updated to MATCHING.", savedRide.getId());
+
+        sseEmitterService.publish(savedRide.getId(), savedRide);
 
         return savedRide;
     }
@@ -79,7 +110,9 @@ public class RideService {
         }
         ride.setStatus(RideStatus.RIDE_STARTED);
         log.info("Ride {} has started.", rideId);
-        return rideRepository.save(ride);
+        Ride saved = rideRepository.save(ride);
+        sseEmitterService.publish(rideId, saved);
+        return saved;
     }
 
     @Transactional
@@ -90,7 +123,9 @@ public class RideService {
         }
         ride.setStatus(RideStatus.COMPLETED);
         log.info("Ride {} completed successfully.", rideId);
-        return rideRepository.save(ride);
+        Ride saved = rideRepository.save(ride);
+        sseEmitterService.publish(rideId, saved);
+        return saved;
     }
 
     @Transactional
@@ -101,7 +136,9 @@ public class RideService {
         }
         ride.setStatus(RideStatus.CANCELLED);
         log.info("Ride {} was cancelled.", rideId);
-        return rideRepository.save(ride);
+        Ride saved = rideRepository.save(ride);
+        sseEmitterService.publish(rideId, saved);
+        return saved;
     }
 
     public Ride getRideDetails(UUID rideId) {

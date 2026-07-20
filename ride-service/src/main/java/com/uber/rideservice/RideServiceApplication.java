@@ -3,9 +3,11 @@ package com.uber.rideservice;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = "com.uber")
 @EnableFeignClients
+@EnableScheduling
 public class RideServiceApplication {
     public static void main(String[] args) {
         SpringApplication.run(RideServiceApplication.class, args);

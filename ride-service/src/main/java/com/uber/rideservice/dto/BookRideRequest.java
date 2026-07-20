@@ -34,4 +34,7 @@ public class BookRideRequest {
     @Min(value = -180, message = "Longitude must be >= -180")
     @Max(value = 90, message = "Longitude must be <= 180")
     private Double dropLongitude;
+
+    private String pickupAddress;
+    private String dropAddress;
 }

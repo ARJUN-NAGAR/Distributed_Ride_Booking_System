@@ -3,15 +3,21 @@ package com.uber.rideservice.model;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "rides")
-@Data
+@Table(name = "rides", indexes = {
+        @Index(name = "idx_ride_passenger", columnList = "passenger_id"),
+        @Index(name = "idx_ride_driver", columnList = "driver_id"),
+        @Index(name = "idx_ride_status", columnList = "status")
+})
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -38,6 +44,12 @@ public class Ride {
 
     @Column(name = "drop_longitude", nullable = false)
     private double dropLongitude;
+
+    @Column(name = "pickup_address", length = 500)
+    private String pickupAddress;
+
+    @Column(name = "drop_address", length = 500)
+    private String dropAddress;
 
     @Column(nullable = false)
     private double fare;
