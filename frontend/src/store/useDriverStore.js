@@ -4,95 +4,134 @@ import toast from 'react-hot-toast';
 
 const DEFAULT_LAT = 28.6139;
 const DEFAULT_LNG = 77.2090;
+const MAX_DRIVERS = 5;
 
 const useDriverStore = create((set, get) => ({
-  driverId: 'driver_101',
-  isOnline: false,
-  currentLat: DEFAULT_LAT,
-  currentLng: DEFAULT_LNG,
-  rating: 4.7,
-  telemetryIntervalId: null,
-  updateCount: 0,
-  lastUpdated: null,
-  isFlashing: false,
+  drivers: [], // Array of driver objects: { id, lat, lng, targetLat, targetLng, intervalId, isOnline, isFlashing }
+  
+  // Form state for spawning a new driver
+  spawnId: `driver_${Math.floor(Math.random() * 1000)}`,
+  spawnLat: DEFAULT_LAT,
+  spawnLng: DEFAULT_LNG,
 
-  setDriverId: (id) => set({ driverId: id }),
+  setSpawnId: (id) => set({ spawnId: id }),
+  setSpawnLocation: (lat, lng) => {
+    const parsedLat = parseFloat(lat);
+    const parsedLng = parseFloat(lng);
+    if (!isNaN(parsedLat) && !isNaN(parsedLng)) {
+      set({ spawnLat: parsedLat, spawnLng: parsedLng });
+    }
+  },
 
-  goOnline: () => {
-    const { driverId } = get();
-    if (!driverId.trim()) {
+  spawnDriver: () => {
+    const { drivers, spawnId, spawnLat, spawnLng } = get();
+    
+    if (drivers.length >= MAX_DRIVERS) {
+      toast.error(`Swarm limit reached (${MAX_DRIVERS} max). API Rate Limiter protection active.`);
+      return;
+    }
+    
+    if (!spawnId.trim()) {
       toast.error('Please enter a Driver ID');
       return;
     }
-    set({ isOnline: true });
-    toast.success(`🟢 ${driverId} is now Online`);
-    get().startTelemetry();
+    
+    if (drivers.some(d => d.id === spawnId)) {
+      toast.error('Driver ID already exists in the swarm');
+      return;
+    }
+
+    const newDriver = {
+      id: spawnId,
+      lat: spawnLat,
+      lng: spawnLng,
+      targetLat: spawnLat, // Used for interpolation
+      targetLng: spawnLng,
+      intervalId: null,
+      isOnline: true,
+      isFlashing: false,
+    };
+
+    set({ 
+      drivers: [...drivers, newDriver],
+      spawnId: `driver_${Math.floor(Math.random() * 1000)}` 
+    });
+    
+    toast.success(`🟢 ${spawnId} joined the swarm at (${spawnLat.toFixed(4)}, ${spawnLng.toFixed(4)})`);
+    get().startDriverTelemetry(spawnId);
   },
 
-  goOffline: () => {
-    get().stopTelemetry();
-    set({ isOnline: false });
-    toast('🔴 Driver went Offline', { icon: '🔴' });
+  removeDriver: (id) => {
+    const driver = get().drivers.find(d => d.id === id);
+    if (driver && driver.intervalId) {
+      clearInterval(driver.intervalId);
+    }
+    set({ drivers: get().drivers.filter(d => d.id !== id) });
+    toast('🔴 Driver removed from swarm', { icon: '🔴' });
   },
 
-  startTelemetry: () => {
-    get().stopTelemetry();
-    // Send initial position immediately
-    get().sendTelemetry();
+  startDriverTelemetry: (id) => {
+    // Send initial position
+    get().sendTelemetryForDriver(id);
 
     const intervalId = setInterval(() => {
-      get().sendTelemetry();
+      get().sendTelemetryForDriver(id);
     }, 3000);
 
-    set({ telemetryIntervalId: intervalId });
+    set(state => ({
+      drivers: state.drivers.map(d => d.id === id ? { ...d, intervalId } : d)
+    }));
   },
 
-  sendTelemetry: async () => {
-    const { driverId, currentLat, currentLng } = get();
+  sendTelemetryForDriver: async (id) => {
+    const driver = get().drivers.find(d => d.id === id);
+    if (!driver) return;
 
-    // Simulate movement with small random offset
-    const newLat = currentLat + (Math.random() - 0.5) * 0.002;
-    const newLng = currentLng + (Math.random() - 0.5) * 0.002;
+    // Simulate movement with small random offset (±~111m)
+    // We update targetLat/targetLng. The React components will LERP towards these.
+    const newLat = driver.lat + (Math.random() - 0.5) * 0.002;
+    const newLng = driver.lng + (Math.random() - 0.5) * 0.002;
 
     try {
       await axiosLocationClient.post(
-        `/api/v1/locations/drivers/${driverId}/telemetry`,
+        `/api/v1/locations/drivers/${id}/telemetry`,
         { latitude: newLat, longitude: newLng }
       );
-      set((state) => ({
-        currentLat: newLat,
-        currentLng: newLng,
-        updateCount: state.updateCount + 1,
-        lastUpdated: new Date().toISOString(),
-        isFlashing: true,
+      
+      set(state => ({
+        drivers: state.drivers.map(d => {
+          if (d.id === id) {
+            // Move current lat/lng to old target, and set new target
+            return {
+              ...d,
+              lat: d.targetLat,
+              lng: d.targetLng,
+              targetLat: newLat,
+              targetLng: newLng,
+              isFlashing: true
+            };
+          }
+          return d;
+        })
       }));
 
-      // Remove flash after 800ms
-      setTimeout(() => set({ isFlashing: false }), 800);
-    } catch {
-      // Error toast handled by interceptor
+      setTimeout(() => {
+        set(state => ({
+          drivers: state.drivers.map(d => d.id === id ? { ...d, isFlashing: false } : d)
+        }));
+      }, 800);
+
+    } catch (error) {
+      // Error handled by interceptor
     }
   },
 
-  stopTelemetry: () => {
-    const { telemetryIntervalId } = get();
-    if (telemetryIntervalId) {
-      clearInterval(telemetryIntervalId);
-      set({ telemetryIntervalId: null });
-    }
-  },
-
-  reset: () => {
-    get().stopTelemetry();
-    set({
-      isOnline: false,
-      currentLat: DEFAULT_LAT,
-      currentLng: DEFAULT_LNG,
-      updateCount: 0,
-      lastUpdated: null,
-      isFlashing: false,
+  clearSwarm: () => {
+    get().drivers.forEach(d => {
+      if (d.intervalId) clearInterval(d.intervalId);
     });
-  },
+    set({ drivers: [] });
+  }
 }));
 
 export default useDriverStore;

@@ -33,25 +33,38 @@ const useDemoSimulatorStore = create((set, get) => ({
   simulatedDrivers: [],
   simulatedRides: [],
   eventSources: {},
+  unloadListener: null,
   intervalId: null,
 
-  startDriverSimulation: () => {
+  startDriverSimulation: (count = 5) => {
     if (get().isDriverSimulating) return;
 
     // Initialize driver locations
-    const drivers = DEFAULT_SIM_DRIVERS.map(d => ({
-      id: d.id,
-      latitude: d.lat,
-      longitude: d.lng,
-      lastUpdated: new Date().toISOString()
-    }));
+    const drivers = [];
+    for (let i = 0; i < count; i++) {
+        // Use tightly coupled default locations for small tests to guarantee matches within 3km radius
+        let pLat = CENTER_LAT + (Math.random() - 0.5) * 0.1;
+        let pLng = CENTER_LNG + (Math.random() - 0.5) * 0.1;
+        
+        if (i < DEFAULT_SIM_DRIVERS.length && count <= 5) {
+            pLat = DEFAULT_SIM_DRIVERS[i].lat;
+            pLng = DEFAULT_SIM_DRIVERS[i].lng;
+        }
+
+        drivers.push({
+            id: `sim_driver_${i + 1}`,
+            latitude: pLat,
+            longitude: pLng,
+            lastUpdated: new Date().toISOString()
+        });
+    }
 
     set({
       isDriverSimulating: true,
       simulatedDrivers: drivers
     });
 
-    toast.success('🚀 Swarm simulation: 5 drivers online!');
+    toast.success(`🚀 Swarm simulation: ${count} drivers online!`);
 
     // Trigger initial burst
     get().broadcastDriversTelemetry();
@@ -80,19 +93,25 @@ const useDemoSimulatorStore = create((set, get) => ({
 
     set({ simulatedDrivers: updatedDrivers });
 
-    // Send HTTP POST requests to location-service
-    await Promise.all(
-      updatedDrivers.map(async (driver) => {
-        try {
-          await axiosLocationClient.post(`/api/v1/locations/drivers/${driver.id}/telemetry`, {
-            latitude: driver.latitude,
-            longitude: driver.longitude
-          });
-        } catch (err) {
-          console.error(`Failed to post telemetry for ${driver.id}:`, err);
-        }
-      })
-    );
+    // Send HTTP POST requests to location-service in batches to prevent browser lockup
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < updatedDrivers.length; i += BATCH_SIZE) {
+        const batch = updatedDrivers.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map(async (driver) => {
+            try {
+              await axiosLocationClient.post(`/api/v1/locations/drivers/${driver.id}/telemetry`, {
+                latitude: driver.latitude,
+                longitude: driver.longitude
+              });
+            } catch (err) {
+              console.error(`Failed to post telemetry for ${driver.id}:`, err);
+            }
+          })
+        );
+        // Small yield
+        await new Promise(res => setTimeout(res, 50));
+    }
   },
 
   stopDriverSimulation: () => {
@@ -108,58 +127,101 @@ const useDemoSimulatorStore = create((set, get) => ({
     toast('🔴 Swarm simulation: drivers offline', { icon: '🔴' });
   },
 
-  bookSimulatedRides: async () => {
+  bookSimulatedRides: async (count = 10000) => {
     if (get().isRiderSimulating) return;
     set({ isRiderSimulating: true, simulatedRides: [] });
 
-    toast('Booking 5 concurrent rides...', { icon: '🚗' });
+    toast(`Booking ${count} concurrent rides (batched)...`, { icon: '🚗' });
 
     // Clear previous event sources
     get().disconnectAllRideStreams();
 
-    await Promise.all(
-      DEFAULT_SIM_RIDES.map(async (rideSpec) => {
-        const payload = {
-          passengerId: rideSpec.passengerId,
-          pickupLatitude: rideSpec.pickup[0],
-          pickupLongitude: rideSpec.pickup[1],
-          dropLatitude: rideSpec.drop[0],
-          dropLongitude: rideSpec.drop[1],
-          pickupAddress: rideSpec.pickupAddress,
-          dropAddress: rideSpec.dropAddress
-        };
+    const BATCH_SIZE = 200;
+    const DELAY_MS = 500;
+    
+    // Helper function to delay
+    const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
-        try {
-          const response = await axiosRideClient.post('/api/v1/rides', payload);
-          const ride = response.data;
+    let processed = 0;
 
-          // Propagate initial request to event log
-          useRideStore.getState().addEventLog('ride.requested', { rideId: ride.id, passengerId: ride.passengerId, status: ride.status });
+    for (let i = 0; i < count; i += BATCH_SIZE) {
+      const batch = [];
+      for (let j = 0; j < BATCH_SIZE && (i + j) < count; j++) {
+        const index = i + j;
+        
+        let pLat = CENTER_LAT + (Math.random() - 0.5) * 0.1;
+        let pLng = CENTER_LNG + (Math.random() - 0.5) * 0.1;
+        let dLat = CENTER_LAT + (Math.random() - 0.5) * 0.1;
+        let dLng = CENTER_LNG + (Math.random() - 0.5) * 0.1;
+        let pAddress = `Pickup ${index + 1}`;
+        let dAddress = `Drop ${index + 1}`;
 
-          // Add to tracked simulated rides
-          set(state => ({
-            simulatedRides: [...state.simulatedRides, {
-              id: ride.id,
-              passengerId: ride.passengerId,
-              pickupLat: ride.pickupLatitude,
-              pickupLng: ride.pickupLongitude,
-              dropLat: ride.dropLatitude,
-              dropLng: ride.dropLongitude,
-              pickupAddress: ride.pickupAddress,
-              dropAddress: ride.dropAddress,
-              status: ride.status,
-              driverId: ride.driverId
-            }]
-          }));
-
-          // Subscribe to updates for this ride
-          get().connectRideStream(ride.id);
-
-        } catch (err) {
-          console.error(`Failed to book ride for ${rideSpec.passengerId}:`, err);
+        // Use tightly coupled default locations for small tests to guarantee matches within 3km radius
+        if (index < DEFAULT_SIM_RIDES.length && count <= 5) {
+            pLat = DEFAULT_SIM_RIDES[index].pickup[0];
+            pLng = DEFAULT_SIM_RIDES[index].pickup[1];
+            dLat = DEFAULT_SIM_RIDES[index].drop[0];
+            dLng = DEFAULT_SIM_RIDES[index].drop[1];
+            pAddress = DEFAULT_SIM_RIDES[index].pickupAddress;
+            dAddress = DEFAULT_SIM_RIDES[index].dropAddress;
         }
-      })
-    );
+        
+        batch.push({
+          passengerId: `sim_passenger_${index + 1}`,
+          pickupLatitude: pLat,
+          pickupLongitude: pLng,
+          dropLatitude: dLat,
+          dropLongitude: dLng,
+          pickupAddress: pAddress,
+          dropAddress: dAddress
+        });
+      }
+
+      await Promise.all(
+        batch.map(async (payload, idxInBatch) => {
+          try {
+            const response = await axiosRideClient.post('/api/v1/rides', payload);
+            const ride = response.data;
+
+            // Propagate initial request to event log
+            useRideStore.getState().addEventLog('ride.requested', { rideId: ride.id, passengerId: ride.passengerId, status: ride.status });
+
+            // Add to tracked simulated rides
+            set(state => ({
+              simulatedRides: [...state.simulatedRides, {
+                id: ride.id,
+                passengerId: ride.passengerId,
+                pickupLat: ride.pickupLatitude,
+                pickupLng: ride.pickupLongitude,
+                dropLat: ride.dropLatitude,
+                dropLng: ride.dropLongitude,
+                pickupAddress: ride.pickupAddress,
+                dropAddress: ride.dropAddress,
+                status: ride.status,
+                driverId: ride.driverId
+              }]
+            }));
+
+            // Subscribe to updates for this ride, ONLY for the first 10 to avoid browser crash
+            if (i + idxInBatch < 10) {
+              get().connectRideStream(ride.id);
+            }
+          } catch (err) {
+            console.error(`Failed to book ride for ${payload.passengerId}:`, err);
+          }
+        })
+      );
+      
+      processed += batch.length;
+      if (processed % 1000 === 0) {
+          toast(`Processed ${processed} / ${count} rides...`, { icon: '⏳' });
+      }
+      
+      if (processed < count) {
+          await delay(DELAY_MS);
+      }
+    }
+    toast.success(`Successfully dispatched ${count} ride requests!`);
   },
 
   connectRideStream: (rideId) => {
@@ -212,17 +274,27 @@ const useDemoSimulatorStore = create((set, get) => ({
       es.close();
     };
 
+    // Ensure cleanup on unload
+    if (!get().unloadListener) {
+      const handleUnload = () => get().disconnectAllRideStreams();
+      window.addEventListener('beforeunload', handleUnload);
+      set({ unloadListener: handleUnload });
+    }
+
     set(state => ({
       eventSources: { ...state.eventSources, [rideId]: es }
     }));
   },
 
   disconnectAllRideStreams: () => {
-    const { eventSources } = get();
+    const { eventSources, unloadListener } = get();
     Object.values(eventSources).forEach(es => {
       if (es) es.close();
     });
-    set({ eventSources: {}, isRiderSimulating: false, simulatedRides: [] });
+    if (unloadListener) {
+      window.removeEventListener('beforeunload', unloadListener);
+    }
+    set({ eventSources: {}, isRiderSimulating: false, simulatedRides: [], unloadListener: null });
   },
 
   runDdosTelemetryBurst: async () => {

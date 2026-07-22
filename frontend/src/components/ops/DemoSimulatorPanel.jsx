@@ -54,9 +54,14 @@ const DemoSimulatorPanel = () => {
               <Square size={14} /> Stop Driver Swarm
             </button>
           ) : (
-            <button onClick={startDriverSimulation} className="btn toggle-online w-full flex items-center justify-center gap-2">
-              <Play size={14} /> Start 5 Drivers
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => startDriverSimulation(5)} className="btn toggle-online w-full flex items-center justify-center gap-2">
+                <Play size={14} /> Start 5 Drivers
+              </button>
+              <button onClick={() => startDriverSimulation(1000)} className="btn toggle-online w-full flex items-center justify-center gap-2">
+                <Play size={14} /> Start 1000 Drivers
+              </button>
+            </div>
           )}
         </div>
 
@@ -64,24 +69,34 @@ const DemoSimulatorPanel = () => {
         <div className="card" style={{ background: 'rgba(255,255,255,0.02)', padding: 16 }}>
           <h4 style={{ margin: '0 0 12px 0', fontSize: 13, fontWeight: 600, color: 'var(--text-light)' }}>2. Batch Rides (Kafka)</h4>
           <p className="text-muted" style={{ fontSize: 11, marginBottom: 16 }}>
-            Books 5 concurrent rides. Propagates through Kafka to match nearby online drivers.
+            Books concurrent rides (batched). Propagates through Kafka to match nearby online drivers.
           </p>
-          <div className="flex gap-2">
-            <button 
-              onClick={bookSimulatedRides} 
-              disabled={!isDriverSimulating || isRiderSimulating} 
-              className="btn btn-primary w-full flex items-center justify-center gap-2"
-              style={{ fontSize: 12, padding: '8px 12px' }}
-            >
-              Book 5 Rides
-            </button>
+          <div className="flex gap-2 flex-col">
+            <div className="flex gap-2">
+              <button 
+                onClick={() => bookSimulatedRides(5)} 
+                disabled={!isDriverSimulating || isRiderSimulating} 
+                className="btn btn-primary w-full flex items-center justify-center gap-2"
+                style={{ fontSize: 12, padding: '8px 12px' }}
+              >
+                Book 5 Rides
+              </button>
+              <button 
+                onClick={() => bookSimulatedRides(5000)} 
+                disabled={!isDriverSimulating || isRiderSimulating} 
+                className="btn btn-primary w-full flex items-center justify-center gap-2"
+                style={{ fontSize: 12, padding: '8px 12px' }}
+              >
+                Book 5000 Rides
+              </button>
+            </div>
             {simulatedRides.length > 0 && (
               <button 
                 onClick={disconnectAllRideStreams} 
-                className="btn btn-ghost" 
+                className="btn btn-ghost w-full" 
                 style={{ padding: '8px 12px', borderColor: 'rgba(239,68,68,0.3)', color: 'var(--crimson)' }}
               >
-                Clear
+                Clear Simulation
               </button>
             )}
           </div>
@@ -138,12 +153,12 @@ const DemoSimulatorPanel = () => {
           <div className="flex justify-between items-center mb-2">
             <span style={{ fontSize: 12, fontWeight: 600 }}>Active Simulated Ride Pipeline</span>
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              Total: {simulatedRides.length} | Matched: {simulatedRides.filter(r => r.driverId).length}/5
+              Total: {simulatedRides.length} | Matched: {simulatedRides.filter(r => r.driverId).length}/{simulatedRides.length}
             </span>
           </div>
 
           <div style={{ maxHeight: 150, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {simulatedRides.map((ride) => (
+            {simulatedRides.slice(0, 10).map((ride) => (
               <div 
                 key={ride.id} 
                 className="flex items-center justify-between"
@@ -175,6 +190,11 @@ const DemoSimulatorPanel = () => {
                 </div>
               </div>
             ))}
+            {simulatedRides.length > 10 && (
+              <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-muted)', padding: '4px' }}>
+                ...and {simulatedRides.length - 10} more rides (stream optimized for UI performance)
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -203,8 +223,8 @@ const DemoSimulatorPanel = () => {
             {/* Step 1: DB Outbox Table */}
             <div className="flex-1 flex flex-col items-center" style={{ background: 'rgba(255,255,255,0.02)', padding: 10, borderRadius: 8, textAlign: 'center' }}>
               <span style={{ fontSize: 10, fontWeight: 'bold', color: 'var(--violet)', marginBottom: 6 }}>1. MySQL DB Outbox</span>
-              <div style={{ display: 'flex', gap: 4, height: 16, alignItems: 'center' }}>
-                {simulatedRides.map((ride) => {
+              <div style={{ display: 'flex', gap: 4, height: 'auto', minHeight: 16, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+                {simulatedRides.slice(0, 100).map((ride) => {
                   const isPending = ride.status === 'REQUESTED' && !ride.driverId;
                   return (
                     <div 
@@ -233,8 +253,8 @@ const DemoSimulatorPanel = () => {
             {/* Step 2: Kafka Broker */}
             <div className="flex-1 flex flex-col items-center" style={{ background: 'rgba(255,255,255,0.02)', padding: 10, borderRadius: 8, textAlign: 'center' }}>
               <span style={{ fontSize: 10, fontWeight: 'bold', color: 'var(--amber)', marginBottom: 6 }}>2. Kafka Topics</span>
-              <div style={{ display: 'flex', gap: 4, height: 16, alignItems: 'center' }}>
-                {simulatedRides.map((ride) => {
+              <div style={{ display: 'flex', gap: 4, height: 'auto', minHeight: 16, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+                {simulatedRides.slice(0, 100).map((ride) => {
                   const inTransit = ride.status === 'MATCHING';
                   return (
                     <div 
@@ -262,8 +282,8 @@ const DemoSimulatorPanel = () => {
             {/* Step 3: Matching Service (Consumes & Pairs) */}
             <div className="flex-1 flex flex-col items-center" style={{ background: 'rgba(255,255,255,0.02)', padding: 10, borderRadius: 8, textAlign: 'center' }}>
               <span style={{ fontSize: 10, fontWeight: 'bold', color: 'var(--emerald)', marginBottom: 6 }}>3. Match Dispatched</span>
-              <div style={{ display: 'flex', gap: 4, height: 16, alignItems: 'center' }}>
-                {simulatedRides.map((ride) => {
+              <div style={{ display: 'flex', gap: 4, height: 'auto', minHeight: 16, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+                {simulatedRides.slice(0, 100).map((ride) => {
                   const isMatched = !!ride.driverId || ride.status === 'COMPLETED';
                   const isFailed = ride.status === 'CANCELLED';
                   return (

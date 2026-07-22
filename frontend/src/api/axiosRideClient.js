@@ -22,11 +22,11 @@ axiosRideClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (!error.response) {
-      toast.error('📡 Ride Service unreachable');
+      toast.error('📡 Ride Service unreachable', { id: 'ride-service-unreachable' });
     } else if (error.response.status === 404) {
-      toast.error('Ride not found — check the Ride ID');
+      toast.error('Ride not found — check the Ride ID', { id: 'ride-not-found' });
     } else if (error.response.status >= 500) {
-      toast.error('Ride Service error — check service logs');
+      toast.error('Ride Service error — check service logs', { id: 'ride-service-500' });
     }
     return Promise.reject(error);
   }

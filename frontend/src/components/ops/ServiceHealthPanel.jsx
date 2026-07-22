@@ -5,8 +5,8 @@ import axiosRideClient from '../../api/axiosRideClient';
 import axios from 'axios';
 
 const SERVICES = [
-  { name: 'Location Service', port: 8082, client: axiosLocationClient },
-  { name: 'Ride Service', port: 8083, client: axiosRideClient },
+  { name: 'Location Service', port: 8082, client: null, baseUrl: 'http://localhost:8082' },
+  { name: 'Ride Service', port: 8083, client: null, baseUrl: 'http://localhost:8083' },
   { name: 'Matching Service', port: 8084, client: null, baseUrl: 'http://localhost:8084' },
 ];
 

@@ -1,5 +1,5 @@
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import useDemoSimulatorStore from '../../store/useDemoSimulatorStore';
@@ -38,17 +38,87 @@ const redIcon = new L.Icon({
   shadowUrl: transparentShadow,
 });
 
+// Imperative Marker Manager for Fleet Swarm to avoid React re-renders and interpolate
+const FleetMarkerManager = ({ driversData }) => {
+  const map = useMap();
+  const markersRef = useRef({});
+  const rafRef = useRef();
+
+  // Sync state data into refs
+  useEffect(() => {
+    const currentIds = new Set(driversData.map(d => d.driverId));
+
+    // Remove expired markers
+    Object.keys(markersRef.current).forEach(id => {
+      if (!currentIds.has(id)) {
+        map.removeLayer(markersRef.current[id].marker);
+        delete markersRef.current[id];
+      }
+    });
+
+    // Update targets
+    driversData.forEach(driver => {
+      if (!markersRef.current[driver.driverId]) {
+        // Spawn
+        const newMarker = L.marker([driver.latitude, driver.longitude], { icon: carIcon }).addTo(map);
+        newMarker.bindPopup(`<strong>Driver:</strong> ${driver.driverId} <br/> <strong>Distance:</strong> ${driver.distanceKm.toFixed(2)} km`);
+        
+        markersRef.current[driver.driverId] = {
+          marker: newMarker,
+          currentLat: driver.latitude,
+          currentLng: driver.longitude,
+          targetLat: driver.latitude,
+          targetLng: driver.longitude
+        };
+      } else {
+        // Update target for interpolation
+        markersRef.current[driver.driverId].targetLat = driver.latitude;
+        markersRef.current[driver.driverId].targetLng = driver.longitude;
+      }
+    });
+  }, [driversData, map]);
+
+  // Animation Loop (LERP)
+  useEffect(() => {
+    const LERP_FACTOR = 0.05;
+    const animate = () => {
+      Object.values(markersRef.current).forEach(data => {
+        const diffLat = data.targetLat - data.currentLat;
+        const diffLng = data.targetLng - data.currentLng;
+        if (Math.abs(diffLat) > 0.00001 || Math.abs(diffLng) > 0.00001) {
+          data.currentLat += diffLat * LERP_FACTOR;
+          data.currentLng += diffLng * LERP_FACTOR;
+          data.marker.setLatLng([data.currentLat, data.currentLng]);
+        }
+      });
+      rafRef.current = requestAnimationFrame(animate);
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, []);
+
+  return null;
+};
+
 const GlobalFleetMap = () => {
   const [nearbyDrivers, setNearbyDrivers] = useState([]);
+  const [tileUrl, setTileUrl] = useState("https://{s}.tile.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png");
   const { simulatedRides } = useDemoSimulatorStore();
   const defaultCenter = [28.6139, 77.209];
 
+  const handleTileError = () => {
+    if (tileUrl.includes('cartocdn')) {
+      console.warn('CartoDB tiles failed to load, falling back to OpenStreetMap standard tiles.');
+      setTileUrl('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+    }
+  };
+
   useEffect(() => {
-    // Poll for nearby drivers every 2 seconds to create the swarm effect
+    // Poll for nearby drivers every 2 seconds
     const fetchDrivers = async () => {
       try {
         const token = localStorage.getItem('jwt_token');
-        const res = await fetch(`http://localhost:8080/api/v1/locations/drivers/nearby?latitude=${defaultCenter[0]}&longitude=${defaultCenter[1]}&radius=15.0`, {
+        const res = await fetch(`http://localhost:8085/api/v1/locations/drivers/nearby?latitude=${defaultCenter[0]}&longitude=${defaultCenter[1]}&radius=15.0`, {
           headers: {
             'Authorization': token ? `Bearer ${token}` : ''
           }
@@ -58,7 +128,7 @@ const GlobalFleetMap = () => {
           setNearbyDrivers(data);
         }
       } catch (err) {
-        // Silently ignore connection errors during heavy load tests
+        // Silently ignore connection errors during load tests
       }
     };
     fetchDrivers();
@@ -79,21 +149,16 @@ const GlobalFleetMap = () => {
         >
           <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-              url="https://{s}.tile.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" // Dark theme tile layer for Ops!
+              url={tileUrl}
+              eventHandlers={{
+                tileerror: handleTileError
+              }}
           />
           
-          {/* Render the swarm of live drivers */}
-          {nearbyDrivers.map((driver) => (
-              <Marker key={driver.driverId} position={[driver.latitude, driver.longitude]} icon={carIcon}>
-                <Popup>
-                  <strong>Driver:</strong> {driver.driverId} <br/> 
-                  <strong>Rating:</strong> {driver.rating} <br/> 
-                  <strong>Distance:</strong> {driver.distanceKm.toFixed(2)} km
-                </Popup>
-              </Marker>
-          ))}
+          {/* Render the swarm imperatively via refs to prevent React render lag */}
+          <FleetMarkerManager driversData={nearbyDrivers} />
 
-          {/* Render simulated rides (pickups, dropoffs, and routes) */}
+          {/* Render simulated rides (pickups, dropoffs, and routes) declaratively as they are low-frequency updates */}
           {simulatedRides.map((ride) => {
             const isMatched = !!ride.driverId;
             const isCompleted = ride.status === 'COMPLETED';
@@ -101,7 +166,6 @@ const GlobalFleetMap = () => {
             
             return (
               <div key={ride.id}>
-                {/* Pickup Marker */}
                 <Marker position={[ride.pickupLat, ride.pickupLng]} icon={greenIcon}>
                   <Popup>
                     <strong>Simulated Passenger (Pickup):</strong> {ride.passengerId} <br/>
@@ -110,7 +174,6 @@ const GlobalFleetMap = () => {
                   </Popup>
                 </Marker>
 
-                {/* Dropoff Marker */}
                 <Marker position={[ride.dropLat, ride.dropLng]} icon={redIcon}>
                   <Popup>
                     <strong>Destination (Dropoff):</strong> {ride.passengerId} <br/>
@@ -119,7 +182,6 @@ const GlobalFleetMap = () => {
                   </Popup>
                 </Marker>
 
-                {/* Route Path Polyline */}
                 <Polyline 
                   positions={[[ride.pickupLat, ride.pickupLng], [ride.dropLat, ride.dropLng]]} 
                   color={polylineColor}

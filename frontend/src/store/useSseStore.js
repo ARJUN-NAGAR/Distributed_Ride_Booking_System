@@ -10,6 +10,7 @@ import axiosRideClient from '../api/axiosRideClient';
  */
 const useSseStore = create((set, get) => ({
   eventSource: null,
+  unloadListener: null,
 
   /**
    * Opens an SSE connection for a given rideId.
@@ -41,15 +42,22 @@ const useSseStore = create((set, get) => ({
       get().disconnect();
     };
 
-    set({ eventSource: es });
+    // Bulletproof cleanup: Close connection on browser refresh/close
+    const handleUnload = () => get().disconnect();
+    window.addEventListener('beforeunload', handleUnload);
+
+    set({ eventSource: es, unloadListener: handleUnload });
   },
 
   disconnect: () => {
-    const { eventSource } = get();
+    const { eventSource, unloadListener } = get();
     if (eventSource) {
       eventSource.close();
-      set({ eventSource: null });
     }
+    if (unloadListener) {
+      window.removeEventListener('beforeunload', unloadListener);
+    }
+    set({ eventSource: null, unloadListener: null });
   },
 }));
 
