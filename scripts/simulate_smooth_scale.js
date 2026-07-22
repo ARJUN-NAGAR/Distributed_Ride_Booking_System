@@ -8,8 +8,8 @@ const TARGET_PATH = '/api/v1/locations/drivers/';
 const NUM_DRIVERS = 1000;
 const BATCH_SIZE = 50; 
 const INTERVAL_MS = 1000; // Send a batch every 1 second
-const CENTER_LAT = 28.7041;
-const CENTER_LNG = 77.1025;
+const CENTER_LAT = 28.6139;
+const CENTER_LNG = 77.2090;
 const RADIUS_DEG = 0.045; 
 
 // Reuse TCP connections to prevent "No buffer space available" socket exhaustion on Windows
