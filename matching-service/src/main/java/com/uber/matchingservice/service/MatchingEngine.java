@@ -54,17 +54,38 @@ public class MatchingEngine {
     public void handleRideRequested(RideRequestedEvent event) {
         log.info("Received ride matching request for ride: {} (Ingested by consumer)", event.getRideId());
 
-        // Fetch driver coordinates from Location service (sync call via OpenFeign)
-        List<NearbyDriverResponse> nearbyDrivers = locationServiceClient.getNearbyDrivers(
-                event.getPickupLatitude(),
-                event.getPickupLongitude(),
-                searchRadiusKm
-        );
+        // 3-Pass Dynamic Radius Expansion Search (Pass 1: 3.0km, Pass 2: 7.5km, Pass 3: 15.0km Hard Cap)
+        double[] radiusPasses = new double[]{ 3.0, 7.5, 15.0 };
+        List<NearbyDriverResponse> nearbyDrivers = java.util.Collections.emptyList();
+        double effectiveRadius = searchRadiusKm;
+
+        for (double passRadius : radiusPasses) {
+            effectiveRadius = passRadius;
+            log.info("Executing Proximity Radius Search Pass at {} km for Ride: {}", passRadius, event.getRideId());
+            nearbyDrivers = locationServiceClient.getNearbyDrivers(
+                    event.getPickupLatitude(),
+                    event.getPickupLongitude(),
+                    passRadius
+            );
+
+            if (nearbyDrivers != null && !nearbyDrivers.isEmpty()) {
+                log.info("Pass at {} km succeeded: found {} candidate drivers", passRadius, nearbyDrivers.size());
+                break;
+            } else {
+                log.warn("Pass at {} km returned 0 drivers for Ride: {}", passRadius, event.getRideId());
+            }
+        }
 
         // Update instance-based resilience fallback cache
         locationServiceClientFallback.updateCache(nearbyDrivers);
 
-        log.info("Location service returned {} driver locations", nearbyDrivers.size());
+        log.info("Location service returned {} driver locations after dynamic expansion up to {} km", 
+                nearbyDrivers != null ? nearbyDrivers.size() : 0, effectiveRadius);
+
+        if (nearbyDrivers == null || nearbyDrivers.isEmpty()) {
+            log.warn("Match failed: Zero drivers found within maximum hard limit of 15.0 km for Ride: {}", event.getRideId());
+            throw new RuntimeException("No available driver found within maximum 15.0 km search boundary for ride ID: " + event.getRideId());
+        }
 
         // Stream scoring heuristic: Score = (Proximity * 0.7) + (Rating * 0.3)
         List<NearbyDriverResponse> sortedDrivers = nearbyDrivers.stream()
@@ -100,7 +121,7 @@ public class MatchingEngine {
 
             kafkaTemplate.send(RIDE_MATCHED_TOPIC, event.getRideId(), matchedEvent);
         } else {
-            log.warn("Match failed: No available unlocked driver found in {} km range for Ride: {}", searchRadiusKm, event.getRideId());
+            log.warn("Match failed: No available unlocked driver found in {} km range for Ride: {}", effectiveRadius, event.getRideId());
             throw new RuntimeException("No available driver found for ride ID: " + event.getRideId());
         }
     }
@@ -111,7 +132,7 @@ public class MatchingEngine {
         
         RideMatchingFailedEvent failedEvent = RideMatchingFailedEvent.builder()
                 .rideId(event.getRideId())
-                .reason("No driver was found within " + searchRadiusKm + " km after multiple attempts.")
+                .reason("No driver was found within maximum 15.0 km search boundary after multiple dynamic expansion passes.")
                 .build();
 
         kafkaTemplate.send(RIDE_FAILED_TOPIC, event.getRideId(), failedEvent);
